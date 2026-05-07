@@ -17,68 +17,42 @@ use aidoku::{
 use helper::*;
 use parser::*;
 
-const BASE_URL: &str = "https://demonicscans.org";
+const BASE_URL: &str = "https://mangalivre.to";
 const USER_AGENT: &str = "Aidoku";
 
 #[get_manga_list]
 fn get_manga_list(filters: Vec<Filter>, page: i32) -> Result<MangaPageResult> {
-	let mut url = format!("{}/advanced.php?list={}", BASE_URL, page);
-
-	let mut searching = false;
+	let mut query = String::new();
 
 	for filter in filters {
-		match filter.kind {
-			FilterType::Title => {
-				if let Ok(value) = filter.value.as_string() {
-					searching = true;
-					let query = encode_uri_component(value.read());
-					url = format!("{}/search.php?manga={}", BASE_URL, query);
-					break;
-				}
+		if let FilterType::Title = filter.kind {
+			if let Ok(value) = filter.value.as_string() {
+				query = value.read();
 			}
-			FilterType::Genre => {
-				if let Ok(id) = filter.object.get("id").as_string() {
-					url.push_str(format!("&genre%5B%5D={}", id.read()).as_str());
-				}
-			}
-			FilterType::Select => match filter.name.as_str() {
-				"Status" => match filter.value.as_int().unwrap_or(-1) {
-					0 => url.push_str("&status=all"),
-					1 => url.push_str("&status=ongoing"),
-					2 => url.push_str("&status=completed"),
-					_ => continue,
-				},
-				_ => continue,
-			},
-			FilterType::Sort => {
-				let value = match filter.value.as_object() {
-					Ok(value) => value,
-					Err(_) => continue,
-				};
-				let index = value.get("index").as_int().unwrap_or(0);
-				let ascending = value.get("ascending").as_bool().unwrap_or(false);
-				url.push_str(match (index, ascending) {
-					(0, true) => "&orderby=NAME%20ASC",
-					(0, false) => "&orderby=NAME%20DESC",
-					(1, true) => "&orderby=VIEWS%20ASC",
-					(1, false) => "&orderby=VIEWS%20DESC",
-					_ => continue,
-				});
-			}
-			_ => continue,
 		}
 	}
+
+	let url = if query.is_empty() {
+		format!("{}/page/{}/?post_type=wp-manga", BASE_URL, page)
+	} else {
+		let encoded = encode_uri_component(query);
+		format!(
+			"{}/?s={}&post_type=wp-manga",
+			BASE_URL,
+			encoded
+		)
+	};
 
 	let html = Request::new(url, HttpMethod::Get)
 		.header("User-Agent", USER_AGENT)
 		.html()?;
 
-	Ok(parse_manga_list(html, searching))
+	Ok(parse_manga_list(html, true))
 }
 
 #[get_manga_listing]
 fn get_manga_listing(_listing: Listing, page: i32) -> Result<MangaPageResult> {
-	let url = format!("{}/lastupdates.php?list={}", BASE_URL, page);
+	let url = format!("{}/page/{}/?m_orderby=latest", BASE_URL, page);
 
 	let html = Request::new(url, HttpMethod::Get)
 		.header("User-Agent", USER_AGENT)

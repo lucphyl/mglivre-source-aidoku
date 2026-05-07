@@ -10,17 +10,31 @@ use crate::BASE_URL;
 pub fn parse_latest_manga_list(html: Node) -> MangaPageResult {
 	let mut manga: Vec<Manga> = Vec::new();
 
-	for node in html.select(".updates-element").array() {
+	for node in html.select(".page-item-detail").array() {
 		let node = node.as_node().expect("Failed to get node");
 
-		let cover_node = node.select("img").first();
-		let cover = cover_node.attr("abs:src").read();
-		let title = cover_node.attr("title").read();
-
 		let link_node = node.select("a").first();
+
 		let raw_url = link_node.attr("href").read();
+
+		if !raw_url.contains("/manga/") {
+			continue;
+		}
+
 		let id = get_manga_id(&raw_url);
 		let url = get_manga_url(&id);
+
+		let title = node
+			.select(".post-title")
+			.first()
+			.text()
+			.read();
+
+		let cover = node
+			.select("img")
+			.first()
+			.attr("abs:src")
+			.read();
 
 		manga.push(Manga {
 			id,
@@ -36,51 +50,30 @@ pub fn parse_latest_manga_list(html: Node) -> MangaPageResult {
 	MangaPageResult { manga, has_more }
 }
 
-pub fn parse_manga_list(html: Node, searching: bool) -> MangaPageResult {
+pub fn parse_manga_list(html: Node, _searching: bool) -> MangaPageResult {
 	let mut manga: Vec<Manga> = Vec::new();
 
-	if searching {
-		for node in html.select("a").array() {
-			let node = node.as_node().expect("Failed to get node");
+	for node in html.select(".c-tabs-item__content").array() {
+		let node = node.as_node().expect("Failed to get node");
 
-			let raw_url = node.attr("href").read();
-			let id = get_manga_id(&raw_url);
-			let url = get_manga_url(&id);
+		let link_node = node.select(".post-title a").first();
 
-			let cover_node = node.select("img").first();
-			let cover = cover_node.attr("abs:src").read();
+		let raw_url = link_node.attr("href").read();
 
-			let title_node = node.select("div:first-child").first();
-			let title = String::from(title_node.text().read().trim());
-
-			manga.push(Manga {
-				id,
-				cover,
-				title,
-				url,
-				..Default::default()
-			})
+		if !raw_url.contains("/manga/") {
+			continue;
 		}
 
-		return MangaPageResult {
-			manga,
-			has_more: false,
-		};
-	}
+		let title = link_node.text().read();
 
-	for node in html.select(".advanced-element").array() {
-		let node = node
-			.as_node()
-			.expect("Failed to get node")
-			.select("a")
-			.first();
-
-		let raw_url = node.attr("href").read();
-
-		let title = node.attr("title").read();
 		let id = get_manga_id(&raw_url);
 		let url = get_manga_url(&id);
-		let cover = node.select("img").attr("abs:src").read();
+
+		let cover = node
+			.select("img")
+			.first()
+			.attr("abs:src")
+			.read();
 
 		manga.push(Manga {
 			id,
@@ -99,34 +92,49 @@ pub fn parse_manga_list(html: Node, searching: bool) -> MangaPageResult {
 pub fn parse_manga_details(html: Node, manga_url: String) -> Manga {
 	let id = get_manga_id(&manga_url);
 
-	let title = html.select(".big-fat-titles").first().text().read();
+	let title = html
+		.select(".post-title h1")
+		.first()
+		.text()
+		.read();
 
 	let mut categories = Vec::new();
-	let genre_list_node = html.select(".genres-list").first();
-	for node in genre_list_node.select("li").array() {
+
+	for node in html.select(".genres-content a").array() {
 		let node = node.as_node().expect("Failed to get genre node");
 		let genre = node.text().read();
 		categories.push(genre);
 	}
 
-	let description = html.select(".white-font").first().text().read();
+	let description = html
+		.select(".summary__content")
+		.first()
+		.text()
+		.read();
 
 	let mut author = String::from("");
 	let mut artist = String::from("");
 	let mut status = String::from("");
 
-	let manga_info_node = html.select("#manga-info-stats").first();
-	for node in manga_info_node.select("#manga-info-stats > div").array() {
-		let node = node.as_node().expect("Failed to get manga info node");
+	for node in html.select(".post-content_item").array() {
+		let node = node.as_node().expect("Failed to get info node");
 
-		let label = node.select("li").first().text().read();
-		let value = node.select("li").last().text().read();
+		let label = node
+			.select(".summary-heading")
+			.first()
+			.text()
+			.read();
 
-		match label.as_str() {
-			"Author" => author = value,
-			"Status" => status = value,
-			// Artist doesn't exist at the time of writing this but it's here for future proofing
-			"Artist" => artist = value,
+		let value = node
+			.select(".summary-content")
+			.first()
+			.text()
+			.read();
+
+		match label.to_lowercase().trim() {
+			"author(s)" => author = value,
+			"artist(s)" => artist = value,
+			"status" => status = value,
 			_ => {}
 		}
 	}
@@ -141,21 +149,28 @@ pub fn parse_manga_details(html: Node, manga_url: String) -> Manga {
 
 	let nsfw = {
 		let mut rating = MangaContentRating::Safe;
+
 		for genre in categories.iter() {
 			match genre.to_lowercase().trim() {
-				"ecchi" | "harem" | "mature" => rating = MangaContentRating::Suggestive,
-				"smut" => {
+				"ecchi" | "mature" => {
+					rating = MangaContentRating::Suggestive
+				}
+				"hentai" | "smut" => {
 					rating = MangaContentRating::Nsfw;
 					break;
 				}
 				_ => {}
 			}
 		}
+
 		rating
 	};
 
-	let cover_node = html.select("img.border-box").first();
-	let cover = cover_node.attr("abs:src").read();
+	let cover = html
+		.select(".summary_image img")
+		.first()
+		.attr("abs:src")
+		.read();
 
 	let viewer = MangaViewer::Scroll;
 
@@ -177,32 +192,32 @@ pub fn parse_manga_details(html: Node, manga_url: String) -> Manga {
 pub fn parse_chapter_list(html: Node) -> Vec<Chapter> {
 	let mut chapters: Vec<Chapter> = Vec::new();
 
-	for node in html.select("#chapters-list").select("li").array() {
+	for node in html.select(".wp-manga-chapter").array() {
 		let node = node.as_node().expect("Failed to get chapter node");
-		let name_node = node.select("a").first();
-		let date_node = name_node.select("span").first();
 
-		let url = format!("{}{}", BASE_URL, name_node.attr("href").read());
+		let link_node = node.select("a").first();
 
-		let num_str = name_node.attr("title").read();
-		let num_str = String::from(num_str.split(" ").last().unwrap_or("1"));
-		let chapter = num_str.parse::<f32>().unwrap_or(-1.0);
+		let raw_url = link_node.attr("href").read();
+
+		let url = raw_url.clone();
 
 		let id = get_chapter_id(&url);
 
-		let lang = String::from("en");
+		let title = link_node.text().read();
 
-		let date_updated = date_node.text().as_date("yyyy-MM-dd", Some("en-US"), None);
+		let chapter = {
+			let parts: Vec<&str> = title.split(" ").collect();
+			let last = parts.last().unwrap_or(&"1");
+			last.parse::<f32>().unwrap_or(-1.0)
+		};
 
-		if chapters.last().is_some_and(|c| c.chapter == chapter) {
-			continue;
-		}
+		let lang = String::from("pt-br");
 
 		chapters.push(Chapter {
 			id,
+			title,
 			lang,
 			chapter,
-			date_updated,
 			url,
 			..Default::default()
 		});
@@ -214,18 +229,22 @@ pub fn parse_chapter_list(html: Node) -> Vec<Chapter> {
 pub fn parse_page_list(html: Node) -> Vec<Page> {
 	let mut pages = Vec::new();
 
-	for (index, node) in html.select(".imgholder").array().enumerate() {
-		let url = node
-			.as_node()
-			.expect("Failed to get chapter image")
-			.attr("abs:src")
-			.read();
+	for (index, node) in html.select(".reading-content img").array().enumerate() {
+		let node = node.as_node().expect("Failed to get image node");
+
+		let url = node.attr("abs:src").read();
+
+		if url.is_empty() {
+			continue;
+		}
+
 		let index: i32 = index.try_into().unwrap();
+
 		pages.push(Page {
 			index,
 			url,
 			..Default::default()
-		})
+		});
 	}
 
 	pages
